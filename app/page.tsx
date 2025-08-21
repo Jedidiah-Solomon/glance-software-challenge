@@ -14,6 +14,16 @@ import {
   BarChart3,
   DollarSign,
 } from "lucide-react";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  CartesianGrid,
+} from "recharts";
+import Footer from "@/components/Footer";
 
 interface StockData {
   symbol: string;
@@ -25,63 +35,52 @@ interface StockData {
   marketCap?: number;
 }
 
-// Mock data for demonstration (in real app, this would come from API)
-const generateMockData = (): StockData[] => [
-  {
-    symbol: "AAPL",
-    name: "Apple Inc.",
-    price: 175.43,
-    change: 2.15,
-    changePercent: 1.24,
-    volume: 45234567,
-    marketCap: 2800000000000,
-  },
-  {
-    symbol: "GOOGL",
-    name: "Alphabet Inc.",
-    price: 138.21,
-    change: -1.87,
-    changePercent: -1.33,
-    volume: 23456789,
-    marketCap: 1750000000000,
-  },
-  {
-    symbol: "MSFT",
-    name: "Microsoft Corporation",
-    price: 378.85,
-    change: 4.32,
-    changePercent: 1.15,
-    volume: 34567890,
-    marketCap: 2900000000000,
-  },
-  {
-    symbol: "TSLA",
-    name: "Tesla, Inc.",
-    price: 248.5,
-    change: -8.75,
-    changePercent: -3.4,
-    volume: 67890123,
-    marketCap: 790000000000,
-  },
-  {
-    symbol: "AMZN",
-    name: "Amazon.com Inc.",
-    price: 145.86,
-    change: 1.23,
-    changePercent: 0.85,
-    volume: 28901234,
-    marketCap: 1500000000000,
-  },
-  {
-    symbol: "NVDA",
-    name: "NVIDIA Corporation",
-    price: 875.28,
-    change: 15.67,
-    changePercent: 1.82,
-    volume: 45678901,
-    marketCap: 2150000000000,
-  },
-];
+const ALPHA_VANTAGE_API_KEY = process.env.NEXT_PUBLIC_ALPHA_VANTAGE_API_KEY;
+const API_URL = "https://www.alphavantage.co/query";
+const STOCK_SYMBOLS = ["AAPL", "MSFT", "GOOGL", "TSLA", "AMZN", "NVDA"];
+
+// Add a mapping for company names
+const COMPANY_NAMES: Record<string, string> = {
+  AAPL: "Apple Inc.",
+  MSFT: "Microsoft Corporation",
+  GOOGL: "Alphabet Inc.",
+  TSLA: "Tesla, Inc.",
+  AMZN: "Amazon.com Inc.",
+  NVDA: "NVIDIA Corporation",
+};
+
+async function fetchStock(symbol: string) {
+  const url = `${API_URL}?function=TIME_SERIES_INTRADAY&symbol=${symbol}&interval=5min&apikey=${ALPHA_VANTAGE_API_KEY}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Failed to fetch ${symbol}`);
+  const data = await res.json();
+  return data;
+}
+
+function parseStockData(symbol: string, data: any): StockData | null {
+  const meta = data["Meta Data"];
+  const timeSeries = data["Time Series (5min)"];
+  if (!meta || !timeSeries) return null;
+  const lastTime = Object.keys(timeSeries)[0];
+  const last = timeSeries[lastTime];
+  const prevTime = Object.keys(timeSeries)[1];
+  const prev = timeSeries[prevTime];
+  if (!last || !prev) return null;
+  const price = parseFloat(last["4. close"]);
+  const prevPrice = parseFloat(prev["4. close"]);
+  const change = price - prevPrice;
+  const changePercent = (change / prevPrice) * 100;
+  const volume = parseInt(last["5. volume"]);
+  return {
+    symbol,
+    name: COMPANY_NAMES[symbol] || symbol,
+    price,
+    change,
+    changePercent,
+    volume,
+    marketCap: undefined,
+  };
+}
 
 const formatNumber = (num: number): string => {
   if (num >= 1e12) return `$${(num / 1e12).toFixed(2)}T`;
@@ -107,42 +106,101 @@ export default function StockDashboard() {
     "symbol" | "price" | "change" | "volume"
   >("symbol");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
+  const [chartData, setChartData] = useState<any[]>([]);
+  const [selectedSymbol, setSelectedSymbol] = useState<string>(
+    STOCK_SYMBOLS[0]
+  );
 
-  // Simulate API call
   useEffect(() => {
-    const fetchStockData = async () => {
+    const fetchAllStocks = async () => {
       setLoading(true);
       setError(null);
-
       try {
-        // Simulate API delay
-        await new Promise((resolve) => setTimeout(resolve, 1500));
-
-        // In a real app, you would fetch from an actual API like:
-        // const response = await fetch('https://api.example.com/stocks')
-        // const data = await response.json()
-
-        setStocks(generateMockData());
+        const results = await Promise.all(
+          STOCK_SYMBOLS.map(async (symbol) => {
+            try {
+              const data = await fetchStock(symbol);
+              return { symbol, data };
+            } catch (e) {
+              return null;
+            }
+          })
+        );
+        const validResults = results.filter(Boolean) as {
+          symbol: string;
+          data: any;
+        }[];
+        setStocks(
+          validResults
+            .map(({ symbol, data }) => parseStockData(symbol, data))
+            .filter(Boolean) as StockData[]
+        );
+        // Prepare chart data for the selected stock
+        const selected = validResults.find((r) => r.symbol === selectedSymbol);
+        if (selected && selected.data["Time Series (5min)"]) {
+          const chartArr = Object.entries(selected.data["Time Series (5min)"])
+            .map(([time, values]: any) => ({
+              time,
+              price: parseFloat(values["4. close"]),
+            }))
+            .reverse();
+          setChartData(chartArr);
+        } else {
+          setChartData([]);
+        }
       } catch (err) {
         setError("Failed to fetch stock data. Please try again.");
+        setChartData([]);
       } finally {
         setLoading(false);
       }
     };
-
-    fetchStockData();
-  }, []);
+    fetchAllStocks();
+  }, [selectedSymbol]);
 
   const handleRefresh = () => {
-    console.log("[v0] Refresh button clicked");
-    setStocks(
-      generateMockData().map((stock) => ({
-        ...stock,
-        price: stock.price + (Math.random() - 0.5) * 10,
-        change: (Math.random() - 0.5) * 20,
-        changePercent: (Math.random() - 0.5) * 5,
-      }))
-    );
+    setLoading(true);
+    setError(null);
+    (async () => {
+      try {
+        const results = await Promise.all(
+          STOCK_SYMBOLS.map(async (symbol) => {
+            try {
+              const data = await fetchStock(symbol);
+              return { symbol, data };
+            } catch (e) {
+              return null;
+            }
+          })
+        );
+        const validResults = results.filter(Boolean) as {
+          symbol: string;
+          data: any;
+        }[];
+        setStocks(
+          validResults
+            .map(({ symbol, data }) => parseStockData(symbol, data))
+            .filter(Boolean) as StockData[]
+        );
+        const selected = validResults.find((r) => r.symbol === selectedSymbol);
+        if (selected && selected.data["Time Series (5min)"]) {
+          const chartArr = Object.entries(selected.data["Time Series (5min)"])
+            .map(([time, values]: any) => ({
+              time,
+              price: parseFloat(values["4. close"]),
+            }))
+            .reverse();
+          setChartData(chartArr);
+        } else {
+          setChartData([]);
+        }
+      } catch (err) {
+        setError("Failed to fetch stock data. Please try again.");
+        setChartData([]);
+      } finally {
+        setLoading(false);
+      }
+    })();
   };
 
   const filteredStocks = stocks.filter(
@@ -179,11 +237,14 @@ export default function StockDashboard() {
     (sum, stock) => sum + (stock?.marketCap || 0),
     0
   );
+  const hasMarketCap = stocks.some(
+    (stock) => stock?.marketCap && stock.marketCap > 0
+  );
   const gainers = stocks.filter((stock) => stock?.change > 0).length;
   const losers = stocks.filter((stock) => stock?.change < 0).length;
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background flex flex-col">
       {/* Header */}
       <header className="border-b bg-card/50 backdrop-blur-sm sticky top-0 z-50">
         <div className="container mx-auto px-4 py-4">
@@ -212,7 +273,7 @@ export default function StockDashboard() {
         </div>
       </header>
 
-      <main className="container mx-auto px-4 py-8">
+      <main className="container mx-auto px-4 py-8 flex-1">
         {/* Market Overview */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
           <Card>
@@ -224,7 +285,7 @@ export default function StockDashboard() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">
-                {formatNumber(totalMarketCap)}
+                {hasMarketCap ? formatNumber(totalMarketCap) : "N/A"}
               </div>
               <p className="text-xs text-muted-foreground">
                 Across {stocks.length} tracked stocks
@@ -454,6 +515,51 @@ export default function StockDashboard() {
             )}
           </CardContent>
         </Card>
+        {/* Chart Section */}
+        <div className="mt-8">
+          <div className="flex items-center gap-4 mb-2">
+            <h2 className="text-lg font-bold">Intraday Price Chart</h2>
+            <select
+              className="border rounded px-2 py-1 text-sm bg-background"
+              value={selectedSymbol}
+              onChange={(e) => setSelectedSymbol(e.target.value)}
+            >
+              {STOCK_SYMBOLS.map((symbol) => (
+                <option key={symbol} value={symbol}>
+                  {COMPANY_NAMES[symbol] || symbol}
+                </option>
+              ))}
+            </select>
+          </div>
+          {chartData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={300}>
+              <LineChart
+                data={chartData}
+                margin={{ top: 16, right: 24, left: 0, bottom: 0 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="time" minTickGap={30} tick={{ fontSize: 12 }} />
+                <YAxis domain={["auto", "auto"]} tick={{ fontSize: 12 }} />
+                <Tooltip
+                  formatter={(value: any) => `$${value.toFixed(2)}`}
+                  labelFormatter={(v) => `Time: ${v}`}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="price"
+                  stroke="#2563eb"
+                  dot={false}
+                  strokeWidth={2}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="text-center text-muted-foreground py-8">
+              No chart data available.
+            </div>
+          )}
+        </div>
+        <Footer />
       </main>
     </div>
   );
