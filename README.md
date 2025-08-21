@@ -69,7 +69,3 @@ This project is a **Stock Price Dashboard** built for the ValueGlance internship
 ## Developer
 
 Developed by [Jedidiah Solomon](https://www.jedidiahsolomon.name.ng/)
-
----
-
-> “Any fool can write code that a computer can understand. Good programmers write code that humans can understand.” – Martin Fowler
