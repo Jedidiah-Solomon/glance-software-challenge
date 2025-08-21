@@ -52,8 +52,17 @@ const COMPANY_NAMES: Record<string, string> = {
 async function fetchStock(symbol: string) {
   const url = `${API_URL}?function=TIME_SERIES_INTRADAY&symbol=${symbol}&interval=5min&apikey=${ALPHA_VANTAGE_API_KEY}`;
   const res = await fetch(url);
-  if (!res.ok) throw new Error(`Failed to fetch ${symbol}`);
   const data = await res.json();
+  console.log("API response for", symbol, data);
+  if (data["Note"]) {
+    throw new Error(data["Note"]);
+  }
+  if (data["Error Message"]) {
+    throw new Error(data["Error Message"]);
+  }
+  if (!data["Meta Data"] || !data["Time Series (5min)"]) {
+    throw new Error(`Unexpected API response for ${symbol}.`);
+  }
   return data;
 }
 
@@ -507,10 +516,10 @@ export default function StockDashboard() {
                 </tbody>
               </table>
             </div>
-
-            {!loading && sortedStocks.length === 0 && (
+            {!loading && sortedStocks.length === 0 && !error && (
               <div className="text-center py-8 text-muted-foreground">
-                No stocks found matching your search.
+                No stock data available. Please check your API key, rate limits,
+                or try again later.
               </div>
             )}
           </CardContent>
