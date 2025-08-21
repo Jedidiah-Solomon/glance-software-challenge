@@ -6,6 +6,9 @@ This project is a **Stock Price Dashboard** built for the ValueGlance internship
 
 ## Live Demo
 
+Please use this: [https://glance-software-git-d90eaf-jedidiah-solomon-onwubikos-projects.vercel.app/](https://glance-software-git-d90eaf-jedidiah-solomon-onwubikos-projects.vercel.app/) <br/>
+Do not use: https://glance-software-challenge-8id3ob4qx.vercel.app/
+
 ## Features
 
 - **Real-time Stock Data:** Fetches up-to-date stock prices, changes, and volumes from the [Alpha Vantage API](https://www.alphavantage.co/).
