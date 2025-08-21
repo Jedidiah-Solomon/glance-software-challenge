@@ -22,21 +22,20 @@ This project is a **Stock Price Dashboard** built for the ValueGlance internship
 - **Language:** TypeScript
 - **Styling:** Tailwind CSS
 - **UI Components:** Custom + Radix UI
-- **Charting:** [Recharts](https://recharts.org/)
-- **API:** [Alpha Vantage TIME_SERIES_INTRADAY](https://www.alphavantage.co/documentation/)
+- **API:** [FINNHUB](https://finnhub.io/docs/api/introduction)
 
 ## API Usage
 
-- The dashboard uses the Alpha Vantage `TIME_SERIES_INTRADAY` endpoint to fetch the latest intraday OHLCV data for a set of tracked stocks (AAPL, MSFT, GOOGL, TSLA, AMZN, NVDA by default).
-- **API Key:** You must provide your own free API key from [Alpha Vantage](https://www.alphavantage.co/support/#api-key).
-- **Rate Limits:** The free tier allows 5 requests per minute. The dashboard is designed to respect this limit by limiting the number of stocks fetched at once.
+- The dashboard uses the Finnhub endpoint to fetch the latest data for a set of tracked stocks (AAPL, MSFT, GOOGL, TSLA, AMZN, NVDA by default).
+- **API Key:** You must provide your own free API key from [FINNHUB](https://finnhub.io/dashboard).
+- **Rate Limits:** The free tier allows 8 requests per minute. The dashboard is designed to respect this limit by limiting the number of stocks fetched at once.
 
 ## Environment Setup
 
 1. **Clone the repository**
 2. **Create a `.env` file** in the project root:
    ```
-   NEXT_PUBLIC_ALPHA_VANTAGE_API_KEY=your_alpha_vantage_api_key_here
+    NEXT_PUBLIC_FINNHUB_API_KEY=your_alpha_vantage_api_key_here
    ```
 3. **Install dependencies:**
    ```
@@ -56,7 +55,6 @@ This project is a **Stock Price Dashboard** built for the ValueGlance internship
 
 - On load, the dashboard fetches intraday data for each tracked stock and displays it in a table.
 - You can search and sort stocks by symbol, price, change, or volume.
-- Select any stock from the dropdown to view its intraday price chart.
 - Loading skeletons and error alerts provide feedback during data fetches.
 - If market cap data is unavailable, "N/A" is shown for transparency.
 

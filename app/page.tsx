@@ -13,7 +13,9 @@ import {
   RefreshCw,
   BarChart3,
   DollarSign,
+  LineChart as LucideLineChart,
 } from "lucide-react";
+import { Sparklines, SparklinesLine } from "react-sparklines";
 import {
   LineChart,
   Line,
@@ -35,8 +37,9 @@ interface StockData {
   marketCap?: number;
 }
 
-const ALPHA_VANTAGE_API_KEY = process.env.NEXT_PUBLIC_ALPHA_VANTAGE_API_KEY;
-const API_URL = "https://www.alphavantage.co/query";
+const FINNHUB_API_KEY = process.env.NEXT_PUBLIC_FINNHUB_API_KEY;
+const FINNHUB_API_URL = "https://finnhub.io/api/v1/quote";
+const FINNHUB_CANDLE_API_URL = "https://finnhub.io/api/v1/stock/candle";
 const STOCK_SYMBOLS = ["AAPL", "MSFT", "GOOGL", "TSLA", "AMZN", "NVDA"];
 
 // Add a mapping for company names
@@ -50,43 +53,29 @@ const COMPANY_NAMES: Record<string, string> = {
 };
 
 async function fetchStock(symbol: string) {
-  const url = `${API_URL}?function=TIME_SERIES_INTRADAY&symbol=${symbol}&interval=5min&apikey=${ALPHA_VANTAGE_API_KEY}`;
+  const url = `${FINNHUB_API_URL}?symbol=${symbol}&token=${FINNHUB_API_KEY}`;
   const res = await fetch(url);
   const data = await res.json();
-  console.log("API response for", symbol, data);
-  if (data["Note"]) {
-    throw new Error(data["Note"]);
+  console.log("Finnhub API response for", symbol, data);
+  if (data.error) {
+    throw new Error(data.error);
   }
-  if (data["Error Message"]) {
-    throw new Error(data["Error Message"]);
-  }
-  if (!data["Meta Data"] || !data["Time Series (5min)"]) {
-    throw new Error(`Unexpected API response for ${symbol}.`);
+  // Finnhub returns { c: current, d: change, dp: change %, h: high, l: low, o: open, pc: prev close }
+  if (typeof data.c !== "number") {
+    throw new Error(`Unexpected Finnhub API response for ${symbol}.`);
   }
   return data;
 }
 
 function parseStockData(symbol: string, data: any): StockData | null {
-  const meta = data["Meta Data"];
-  const timeSeries = data["Time Series (5min)"];
-  if (!meta || !timeSeries) return null;
-  const lastTime = Object.keys(timeSeries)[0];
-  const last = timeSeries[lastTime];
-  const prevTime = Object.keys(timeSeries)[1];
-  const prev = timeSeries[prevTime];
-  if (!last || !prev) return null;
-  const price = parseFloat(last["4. close"]);
-  const prevPrice = parseFloat(prev["4. close"]);
-  const change = price - prevPrice;
-  const changePercent = (change / prevPrice) * 100;
-  const volume = parseInt(last["5. volume"]);
+  // Finnhub: c=current, d=change, dp=change %, pc=prev close
   return {
     symbol,
     name: COMPANY_NAMES[symbol] || symbol,
-    price,
-    change,
-    changePercent,
-    volume,
+    price: data.c,
+    change: data.d ?? data.c - data.pc,
+    changePercent: data.dp ?? ((data.c - data.pc) / data.pc) * 100,
+    volume: 0, // Finnhub's quote endpoint does not provide volume
     marketCap: undefined,
   };
 }
@@ -106,6 +95,15 @@ const formatVolume = (num: number): string => {
   return num.toString();
 };
 
+// Helper to generate a mock sparkline (random walk)
+function generateMockSparkline(base: number, points = 10) {
+  let arr = [base];
+  for (let i = 1; i < points; i++) {
+    arr.push(arr[i - 1] + (Math.random() - 0.5) * base * 0.01);
+  }
+  return arr;
+}
+
 export default function StockDashboard() {
   const [stocks, setStocks] = useState<StockData[]>([]);
   const [loading, setLoading] = useState(true);
@@ -119,6 +117,8 @@ export default function StockDashboard() {
   const [selectedSymbol, setSelectedSymbol] = useState<string>(
     STOCK_SYMBOLS[0]
   );
+  const [chartLoading, setChartLoading] = useState(false);
+  const [chartError, setChartError] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchAllStocks = async () => {
@@ -165,6 +165,34 @@ export default function StockDashboard() {
       }
     };
     fetchAllStocks();
+  }, [selectedSymbol]);
+
+  // Fetch daily candle data for the selected stock
+  useEffect(() => {
+    const fetchChartData = async () => {
+      setChartLoading(true);
+      setChartError(null);
+      try {
+        const url = `${FINNHUB_CANDLE_API_URL}?symbol=${selectedSymbol}&resolution=D&count=7&token=${FINNHUB_API_KEY}`;
+        const res = await fetch(url);
+        const data = await res.json();
+        if (data.s !== "ok") {
+          throw new Error(data.error || "Failed to load chart data.");
+        }
+        // data.c = close prices, data.t = timestamps
+        const chartArr = data.t.map((timestamp: number, i: number) => ({
+          date: new Date(timestamp * 1000).toLocaleDateString(),
+          close: data.c[i],
+        }));
+        setChartData(chartArr);
+      } catch (err: any) {
+        setChartError(err.message || "Failed to load chart data.");
+        setChartData([]);
+      } finally {
+        setChartLoading(false);
+      }
+    };
+    fetchChartData();
   }, [selectedSymbol]);
 
   const handleRefresh = () => {
@@ -251,6 +279,16 @@ export default function StockDashboard() {
   );
   const gainers = stocks.filter((stock) => stock?.change > 0).length;
   const losers = stocks.filter((stock) => stock?.change < 0).length;
+
+  // Market overview: find top gainer/loser
+  const topGainer = stocks.reduce(
+    (max, s) => (s.changePercent > (max?.changePercent ?? -Infinity) ? s : max),
+    null as StockData | null
+  );
+  const topLoser = stocks.reduce(
+    (min, s) => (s.changePercent < (min?.changePercent ?? Infinity) ? s : min),
+    null as StockData | null
+  );
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -359,73 +397,14 @@ export default function StockDashboard() {
               <table className="w-full">
                 <thead>
                   <tr className="border-b">
-                    <th className="text-left py-3 px-2">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleSort("symbol")}
-                        className="font-semibold"
-                      >
-                        Symbol
-                        {sortBy === "symbol" && (
-                          <span className="ml-1">
-                            {sortOrder === "asc" ? "↑" : "↓"}
-                          </span>
-                        )}
-                      </Button>
-                    </th>
+                    <th className="text-left py-3 px-2">Symbol</th>
                     <th className="text-left py-3 px-2 hidden sm:table-cell">
                       Company
                     </th>
-                    <th className="text-right py-3 px-2">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleSort("price")}
-                        className="font-semibold"
-                      >
-                        Price
-                        {sortBy === "price" && (
-                          <span className="ml-1">
-                            {sortOrder === "asc" ? "↑" : "↓"}
-                          </span>
-                        )}
-                      </Button>
-                    </th>
-                    <th className="text-right py-3 px-2">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleSort("change")}
-                        className="font-semibold"
-                      >
-                        Change
-                        {sortBy === "change" && (
-                          <span className="ml-1">
-                            {sortOrder === "asc" ? "↑" : "↓"}
-                          </span>
-                        )}
-                      </Button>
-                    </th>
-                    <th className="text-right py-3 px-2 hidden md:table-cell">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleSort("volume")}
-                        className="font-semibold"
-                      >
-                        Volume
-                        {sortBy === "volume" && (
-                          <span className="ml-1">
-                            {sortOrder === "asc" ? "↑" : "↓"}
-                          </span>
-                        )}
-                      </Button>
-                    </th>
+                    <th className="text-right py-3 px-2">Price</th>
+                    <th className="text-right py-3 px-2">Change</th>
+                    <th className="text-right py-3 px-2">% Change</th>
+                    <th className="text-right py-3 px-2">Sparkline</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -444,71 +423,66 @@ export default function StockDashboard() {
                           <td className="py-4 px-2">
                             <Skeleton className="h-4 w-16" />
                           </td>
-                          <td className="py-4 px-2 hidden md:table-cell">
-                            <Skeleton className="h-4 w-20" />
+                          <td className="py-4 px-2">
+                            <Skeleton className="h-4 w-16" />
+                          </td>
+                          <td className="py-4 px-2">
+                            <Skeleton className="h-4 w-24" />
                           </td>
                         </tr>
                       ))
                     : sortedStocks.map((stock) => {
                         if (!stock) return null;
-
                         const isPositive = (stock.change || 0) >= 0;
-                        const changeValue = stock.change || 0;
-                        const changePercent = stock.changePercent || 0;
-
                         return (
                           <tr
                             key={stock.symbol}
                             className="border-b hover:bg-muted/50 transition-colors"
                           >
-                            <td className="py-4 px-2">
-                              <div className="font-semibold text-primary">
-                                {stock.symbol || "N/A"}
-                              </div>
+                            <td className="py-4 px-2 font-semibold text-primary">
+                              {stock.symbol}
                             </td>
-                            <td className="py-4 px-2 hidden sm:table-cell">
-                              <div className="text-sm text-muted-foreground max-w-[200px] truncate">
-                                {stock.name || "Unknown"}
-                              </div>
+                            <td className="py-4 px-2 hidden sm:table-cell text-muted-foreground max-w-[200px] truncate">
+                              {stock.name}
+                            </td>
+                            <td className="py-4 px-2 text-right font-semibold">
+                              ${stock.price.toFixed(2)}
+                            </td>
+                            <td
+                              className={`py-4 px-2 text-right font-semibold ${
+                                isPositive ? "text-green-600" : "text-red-600"
+                              }`}
+                            >
+                              <span className="inline-flex items-center gap-1">
+                                {isPositive ? (
+                                  <TrendingUp className="h-4 w-4" />
+                                ) : (
+                                  <TrendingDown className="h-4 w-4" />
+                                )}
+                                {isPositive ? "+" : ""}
+                                {stock.change.toFixed(2)}
+                              </span>
+                            </td>
+                            <td
+                              className={`py-4 px-2 text-right font-semibold ${
+                                isPositive ? "text-green-600" : "text-red-600"
+                              }`}
+                            >
+                              {isPositive ? "+" : ""}
+                              {stock.changePercent.toFixed(2)}%
                             </td>
                             <td className="py-4 px-2 text-right">
-                              <div className="font-semibold">
-                                ${(stock.price || 0).toFixed(2)}
-                              </div>
-                            </td>
-                            <td className="py-4 px-2 text-right">
-                              <div className="flex flex-col items-end gap-1">
-                                <div
-                                  className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${
-                                    isPositive
-                                      ? "bg-green-100 text-green-800"
-                                      : "bg-red-100 text-red-800"
-                                  }`}
-                                >
-                                  {isPositive ? (
-                                    <TrendingUp className="h-3 w-3" />
-                                  ) : (
-                                    <TrendingDown className="h-3 w-3" />
-                                  )}
-                                  {isPositive ? "+" : ""}
-                                  {changeValue.toFixed(2)}
-                                </div>
-                                <div
-                                  className={`text-xs ${
-                                    changePercent >= 0
-                                      ? "text-green-600"
-                                      : "text-red-600"
-                                  }`}
-                                >
-                                  ({changePercent >= 0 ? "+" : ""}
-                                  {changePercent.toFixed(2)}%)
-                                </div>
-                              </div>
-                            </td>
-                            <td className="py-4 px-2 text-right hidden md:table-cell">
-                              <div className="text-sm text-muted-foreground">
-                                {formatVolume(stock.volume || 0)}
-                              </div>
+                              <Sparklines
+                                data={generateMockSparkline(stock.price)}
+                                width={60}
+                                height={20}
+                                margin={2}
+                              >
+                                <SparklinesLine
+                                  color={isPositive ? "#16a34a" : "#dc2626"}
+                                  style={{ fill: "none" }}
+                                />
+                              </Sparklines>
                             </td>
                           </tr>
                         );
@@ -524,50 +498,6 @@ export default function StockDashboard() {
             )}
           </CardContent>
         </Card>
-        {/* Chart Section */}
-        <div className="mt-8">
-          <div className="flex items-center gap-4 mb-2">
-            <h2 className="text-lg font-bold">Intraday Price Chart</h2>
-            <select
-              className="border rounded px-2 py-1 text-sm bg-background"
-              value={selectedSymbol}
-              onChange={(e) => setSelectedSymbol(e.target.value)}
-            >
-              {STOCK_SYMBOLS.map((symbol) => (
-                <option key={symbol} value={symbol}>
-                  {COMPANY_NAMES[symbol] || symbol}
-                </option>
-              ))}
-            </select>
-          </div>
-          {chartData.length > 0 ? (
-            <ResponsiveContainer width="100%" height={300}>
-              <LineChart
-                data={chartData}
-                margin={{ top: 16, right: 24, left: 0, bottom: 0 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="time" minTickGap={30} tick={{ fontSize: 12 }} />
-                <YAxis domain={["auto", "auto"]} tick={{ fontSize: 12 }} />
-                <Tooltip
-                  formatter={(value: any) => `$${value.toFixed(2)}`}
-                  labelFormatter={(v) => `Time: ${v}`}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="price"
-                  stroke="#2563eb"
-                  dot={false}
-                  strokeWidth={2}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          ) : (
-            <div className="text-center text-muted-foreground py-8">
-              No chart data available.
-            </div>
-          )}
-        </div>
         <Footer />
       </main>
     </div>
